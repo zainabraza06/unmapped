@@ -38,7 +38,7 @@ function validateAnswers(answers) {
   const missing = [];
   if (!answers.work_description) missing.push("work_description");
   if (!answers.country_code) missing.push("country_code");
-  if (!answers.sector) missing.push("sector");
+  // sector is optional — the LLM extractor and scorer infer it from work_description
   if (missing.length) {
     return `Missing required fields: ${missing.join(", ")}`;
   }
