@@ -149,11 +149,11 @@ function buildEconomicSignals(country, laborStats, oppConfig, generatedConfig) {
     : "Sector distribution not available";
 
   const youthUnemployment = yu
-    ? `${(yu.rate * 100).toFixed(1)}% (age ${yu.age_group}, ${yu.source})`
+    ? `${(yu.rate * 100).toFixed(1)}%${yu.age_group ? ` (age ${yu.age_group})` : ""} — ${yu.source}`
     : "Not available";
 
   const neetRate = nr
-    ? `${(nr.rate * 100).toFixed(1)}% of youth aged ${nr.age_group} — not in education, employment or training (${nr.source})`
+    ? `${(nr.rate * 100).toFixed(1)}%${nr.age_group ? ` of youth aged ${nr.age_group}` : ""} — not in education, employment or training (${nr.source})`
     : "Not available";
 
   const gdpPerCapita = gp

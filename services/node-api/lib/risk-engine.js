@@ -191,9 +191,20 @@ async function callLLMOnce(occupation, skills, country, automation, laborStats) 
   const raw = result.choices?.[0]?.message?.content ?? "";
   if (!raw.trim()) throw new Error("Empty LLM response");
 
-  const parsed = JSON.parse(
-    raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim()
-  );
+  // Strip markdown fences, then sanitize literal control characters inside
+  // JSON strings that some models emit (causes "Bad control character" parse errors).
+  const cleaned = raw
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```\s*$/, "")
+    .trim()
+    .replace(/[\x00-\x1F\x7F]/g, (ch) => {
+      if (ch === "\n") return "\\n";
+      if (ch === "\r") return "\\r";
+      if (ch === "\t") return "\\t";
+      return "";
+    });
+
+  const parsed = JSON.parse(cleaned);
 
   const required = ["task_breakdown", "skill_resilience_analysis", "macro_signals", "final_readiness_profile", "explainability"];
   for (const key of required) {
