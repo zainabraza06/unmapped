@@ -1,7 +1,7 @@
 /**
  * LLM-based skill extractor — powered by OpenRouter.
  *
- * Uses the @openrouter/sdk to call any model available on OpenRouter.
+ * Uses shared HTTP client (llm-client.js) with a multi-model cascade on OpenRouter.
  * Falls back to deterministic heuristic extraction when OPENROUTER_API_KEY
  * is absent or the LLM call fails, so the system runs fully offline.
  *
@@ -10,15 +10,13 @@
  *
  * Environment variables (set in .env):
  *   OPENROUTER_API_KEY   — required to enable the LLM path
- *   OPENROUTER_MODEL     — model slug, default "openai/gpt-oss-120b:free"
+ *   OPENROUTER_MODEL     — primary model slug (cascade continues on 429/404)
  *   LLM_TIMEOUT_MS       — request timeout in ms, default 60000
  */
 
-import { OpenRouter } from "@openrouter/sdk";
 import { normalizeText } from "./text.js";
+import { callOpenRouter, parseJsonResponse, getModelCascade } from "./llm-client.js";
 
-const OPENROUTER_MODEL =
-  process.env.OPENROUTER_MODEL ?? "openai/gpt-oss-120b:free";
 // Free-tier models on OpenRouter can take 30-60s — give them full headroom.
 const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 60000);
 
@@ -194,61 +192,19 @@ function stripCodeFences(raw) {
     .trim();
 }
 
-let _openRouterClient = null;
-function getClient() {
-  if (!_openRouterClient) {
-    _openRouterClient = new OpenRouter({
-      apiKey: process.env.OPENROUTER_API_KEY,
-    });
-  }
-  return _openRouterClient;
-}
-
-/**
- * Wrap a promise with a clean timeout using Promise.race.
- * Uses a plain setTimeout (no AbortController) so there are no dangling
- * signal listeners after the race resolves.
- */
-function withTimeout(promise, ms) {
-  let timer;
-  const deadline = new Promise((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`LLM request timed out after ${ms}ms`)),
-      ms
-    );
-  });
-  // Clear the timer whichever branch wins.
-  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
-}
-
 async function callLLM(answers) {
-  const client = getClient();
-
-  // Non-streaming call — structured JSON extraction doesn't benefit from
-  // streaming and keeps error handling simple.
-  // Note: gpt-oss-120b is a reasoning model; temperature/responseFormat
-  // flags are set conservatively to maximise cross-model compatibility.
-  const result = await client.chat.send({
-    chatRequest: {
-      model: OPENROUTER_MODEL,
-      maxTokens: 800,
-      // Request JSON output. Not all models honour this; robust parsing
-      // (stripCodeFences) handles the fallback cases.
-      responseFormat: { type: "json_object" },
-      stream: false,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: buildUserPrompt(answers) },
-      ],
-    },
+  const { content, model } = await callOpenRouter({
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: buildUserPrompt(answers) },
+    ],
+    max_tokens: 800,
+    timeout_ms: LLM_TIMEOUT_MS,
+    referer_title: "UNMAPPED Skill Extractor",
+    log_prefix: "[llm-extractor]",
   });
 
-  const raw = result.choices?.[0]?.message?.content ?? "";
-  if (!raw.trim()) {
-    throw new Error("OpenRouter returned an empty response");
-  }
-
-  const parsed = JSON.parse(stripCodeFences(raw));
+  const parsed = parseJsonResponse(content);
 
   const extractedSkills = (parsed.extracted_skills ?? [])
     .filter((s) => s && typeof s.label === "string" && s.label.trim())
@@ -270,8 +226,6 @@ async function callLLM(answers) {
       ? parsed.likely_sector.trim()
       : answers.sector ?? null;
 
-  const modelSlug = OPENROUTER_MODEL.replace(/[^a-z0-9]/gi, "_");
-
   return {
     skills: extractedSkills.map((s) => s.label),
     tools: answers.tools ?? [],
@@ -279,9 +233,9 @@ async function callLLM(answers) {
     extracted_tasks: extractedTasks,
     likely_sector: likelySector,
     confidence: "llm",
-    notes: [`llm_openrouter_${modelSlug}`],
+    notes: [`llm_openrouter`],
     provider: "openrouter",
-    model: OPENROUTER_MODEL,
+    model,
   };
 }
 
@@ -292,7 +246,7 @@ async function callLLM(answers) {
 /**
  * Extract skills, tasks, and sector signal from Module1 intake answers.
  *
- * Uses OpenRouter (via @openrouter/sdk) when OPENROUTER_API_KEY is set;
+ * Uses OpenRouter when OPENROUTER_API_KEY is set;
  * otherwise falls back to deterministic heuristic extraction at zero cost.
  * LLM failures also fall back automatically — the pipeline never breaks.
  *
@@ -307,9 +261,9 @@ export async function extractSkills(answers) {
     return heuristicExtract(answers);
   }
 
-  console.info(`[llm-extractor] LLM extraction starting (model=${OPENROUTER_MODEL}, timeout=${LLM_TIMEOUT_MS}ms)`);
+  console.info(`[llm-extractor] LLM extraction starting (cascade: ${getModelCascade().join(" → ")}, timeout=${LLM_TIMEOUT_MS}ms)`);
   try {
-    const result = await withTimeout(callLLM(answers), LLM_TIMEOUT_MS);
+    const result = await callLLM(answers);
     console.info(`[llm-extractor] LLM extraction succeeded — provider=${result.provider}`);
     return result;
   } catch (err) {

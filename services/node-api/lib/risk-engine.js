@@ -21,19 +21,9 @@
 import { getByONetLinks, getByISCOGroup } from "./automation-lookup.js";
 import { calibrateForLMIC, getCountryLaborStats } from "./lmic-calibrator.js";
 import { getTaxonomyIndex } from "./dataStore.js";
+import { callOpenRouter, parseJsonResponse } from "./llm-client.js";
 
-const OPENROUTER_MODEL   = process.env.OPENROUTER_MODEL ?? "openai/gpt-oss-120b:free";
-const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-// Free-tier models on OpenRouter can take 30-60s — match llm-extractor headroom.
-const LLM_TIMEOUT_MS     = Number(process.env.LLM_TIMEOUT_MS ?? 60000);
-
-function withTimeout(promise, ms) {
-  let timer;
-  const deadline = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`LLM timeout after ${ms}ms`)), ms);
-  });
-  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
-}
+const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 60000);
 
 // ---------------------------------------------------------------------------
 // Step 1 — Automation risk estimation
@@ -157,60 +147,24 @@ Replace all example values with real analysis of the profile above. Rules:
 // ---------------------------------------------------------------------------
 
 async function callLLMOnce(occupation, skills, country, automation, laborStats) {
-  const body = {
-    model: OPENROUTER_MODEL,
-    max_tokens: 2000,
-    response_format: { type: "json_object" },
-    stream: false,
+  const { content, model } = await callOpenRouter({
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
       { role: "user", content: buildAnalysisPrompt(occupation, skills, country, automation, laborStats) },
     ],
-  };
+    max_tokens: 2000,
+    timeout_ms: LLM_TIMEOUT_MS,
+    referer_title: "UNMAPPED Risk Engine",
+    log_prefix: "[risk-engine]",
+  });
 
-  const res = await withTimeout(
-    fetch(OPENROUTER_API_URL, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://unmapped.app",
-        "X-Title": "UNMAPPED Risk Engine",
-      },
-      body: JSON.stringify(body),
-    }),
-    LLM_TIMEOUT_MS
-  );
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`OpenRouter HTTP ${res.status}: ${errText.slice(0, 200)}`);
-  }
-
-  const result = await res.json();
-  const raw = result.choices?.[0]?.message?.content ?? "";
-  if (!raw.trim()) throw new Error("Empty LLM response");
-
-  // Strip markdown fences, then sanitize literal control characters inside
-  // JSON strings that some models emit (causes "Bad control character" parse errors).
-  const cleaned = raw
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```\s*$/, "")
-    .trim()
-    .replace(/[\x00-\x1F\x7F]/g, (ch) => {
-      if (ch === "\n") return "\\n";
-      if (ch === "\r") return "\\r";
-      if (ch === "\t") return "\\t";
-      return "";
-    });
-
-  const parsed = JSON.parse(cleaned);
+  const parsed = parseJsonResponse(content);
 
   const required = ["task_breakdown", "skill_resilience_analysis", "macro_signals", "final_readiness_profile", "explainability"];
   for (const key of required) {
     if (!parsed[key]) throw new Error(`LLM response missing key: ${key}`);
   }
-  return { ...parsed, _provider: `openrouter/${OPENROUTER_MODEL}` };
+  return { ...parsed, _provider: `openrouter/${model}` };
 }
 
 async function runLLMAnalysis(occupation, skills, country, automation, laborStats) {
@@ -219,30 +173,12 @@ async function runLLMAnalysis(occupation, skills, country, automation, laborStat
     return buildTemplateFallback(occupation, skills, automation, laborStats, country);
   }
 
-  // Retry once with backoff — free-tier OpenRouter models rate-limit back-to-back
-  // requests (the prior Module 1 call may still be holding the queue).
-  const RETRY_DELAY_MS = 12000;
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    console.info(`[risk-engine] LLM analysis attempt ${attempt}/2 (model=${OPENROUTER_MODEL}, timeout=${LLM_TIMEOUT_MS}ms)`);
-    try {
-      const parsed = await callLLMOnce(occupation, skills, country, automation, laborStats);
-      console.info(`[risk-engine] LLM analysis succeeded on attempt ${attempt}`);
-      return parsed;
-    } catch (err) {
-      const detail = err?.response?.status
-        ? `HTTP ${err.response.status} — ${err.message}`
-        : err.message;
-      console.warn(`[risk-engine] Attempt ${attempt} failed: ${detail}`);
-      if (attempt < 2) {
-        console.info(`[risk-engine] Waiting ${RETRY_DELAY_MS / 1000}s before retry…`);
-        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
-      }
-    }
+  try {
+    return await callLLMOnce(occupation, skills, country, automation, laborStats);
+  } catch (err) {
+    console.warn(`[risk-engine] All models exhausted: ${err.message} — using deterministic template`);
+    return buildTemplateFallback(occupation, skills, automation, laborStats, country);
   }
-
-  const lastErr = `Both LLM attempts failed — see server log for details`;
-  console.warn(`[risk-engine] ${lastErr}`);
-  return { ...buildTemplateFallback(occupation, skills, automation, laborStats, country), _llm_error: lastErr };
 }
 
 // Generic ISCO task templates used when O*NET data is not available in the

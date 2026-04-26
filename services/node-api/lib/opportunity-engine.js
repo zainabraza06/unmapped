@@ -25,26 +25,11 @@
  *   - At least 2 real economic indicators must appear in the output.
  */
 
-import { OpenRouter } from "@openrouter/sdk";
 import { getCountryLaborStats } from "./lmic-calibrator.js";
 import { getOpportunitiesConfig, getGeneratedCountryConfig } from "./dataStore.js";
+import { callOpenRouter, parseJsonResponse } from "./llm-client.js";
 
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? "openai/gpt-oss-120b:free";
-const LLM_TIMEOUT_MS   = Number(process.env.LLM_TIMEOUT_MS ?? 60000);
-
-let _client = null;
-function getClient() {
-  _client ??= new OpenRouter({ apiKey: process.env.OPENROUTER_API_KEY });
-  return _client;
-}
-
-function withTimeout(promise, ms) {
-  let timer;
-  const deadline = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`LLM timeout after ${ms}ms`)), ms);
-  });
-  return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
-}
+const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 60000);
 
 // ---------------------------------------------------------------------------
 // Step 1 — Deterministic labor market anchoring
@@ -309,43 +294,43 @@ Constraints:
 // LLM call with template fallback — Steps 2–5
 // ---------------------------------------------------------------------------
 
+function extractPreferredModelFromModule2(module2) {
+  const provider = module2?._meta?.analysis_provider;
+  if (typeof provider !== "string" || !provider.startsWith("openrouter/")) {
+    return null;
+  }
+  const model = provider.slice("openrouter/".length).trim();
+  return model || null;
+}
+
 async function runLLMOpportunityAnalysis(profile, module2, country, laborStats, anchor, signals, oppConfig) {
   if (!process.env.OPENROUTER_API_KEY) {
     return buildOpportunityFallback(profile, module2, country, anchor, signals, oppConfig);
   }
 
   try {
-    const client = getClient();
-    const result = await withTimeout(
-      client.chat.send({
-        chatRequest: {
-          model: OPENROUTER_MODEL,
-          maxTokens: 1500,
-          responseFormat: { type: "json_object" },
-          stream: false,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: buildOpportunityPrompt(profile, module2, country, laborStats, anchor, signals, oppConfig) },
-          ],
-        },
-      }),
-      LLM_TIMEOUT_MS
-    );
+    const preferredModel = extractPreferredModelFromModule2(module2);
+    const { content, model } = await callOpenRouter({
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: buildOpportunityPrompt(profile, module2, country, laborStats, anchor, signals, oppConfig) },
+      ],
+      max_tokens: 1500,
+      timeout_ms: LLM_TIMEOUT_MS,
+      referer_title: "UNMAPPED Opportunity Engine",
+      log_prefix: "[opportunity-engine]",
+      preferred_model: preferredModel,
+    });
 
-    const raw = result.choices?.[0]?.message?.content ?? "";
-    if (!raw.trim()) throw new Error("Empty LLM response");
-
-    const parsed = JSON.parse(
-      raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim()
-    );
+    const parsed = parseJsonResponse(content);
 
     const required = ["opportunities", "ranking", "policy_view", "explainability"];
     for (const key of required) {
       if (!parsed[key]) throw new Error(`LLM response missing key: ${key}`);
     }
-    return { ...parsed, _provider: `openrouter/${OPENROUTER_MODEL}` };
+    return { ...parsed, _provider: `openrouter/${model}` };
   } catch (err) {
-    console.warn(`[opportunity-engine] LLM failed (${err.message}) — using template fallback`);
+    console.warn(`[opportunity-engine] All models exhausted: ${err.message} — using template fallback`);
     return buildOpportunityFallback(profile, module2, country, anchor, signals, oppConfig);
   }
 }
