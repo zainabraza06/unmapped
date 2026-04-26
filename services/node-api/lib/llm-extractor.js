@@ -11,7 +11,7 @@
  * Environment variables (set in .env):
  *   OPENROUTER_API_KEY   — required to enable the LLM path
  *   OPENROUTER_MODEL     — model slug, default "openai/gpt-oss-120b:free"
- *   LLM_TIMEOUT_MS       — request timeout in ms, default 8000
+ *   LLM_TIMEOUT_MS       — request timeout in ms, default 60000
  */
 
 import { OpenRouter } from "@openrouter/sdk";
@@ -19,8 +19,8 @@ import { normalizeText } from "./text.js";
 
 const OPENROUTER_MODEL =
   process.env.OPENROUTER_MODEL ?? "openai/gpt-oss-120b:free";
-// Reasoning models can take 10-20s on free tier — give them enough headroom.
-const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 20000);
+// Free-tier models on OpenRouter can take 30-60s — give them full headroom.
+const LLM_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS ?? 60000);
 
 // ---------------------------------------------------------------------------
 // Heuristic fallback — runs when no API key is set or on LLM failure.
@@ -303,14 +303,18 @@ async function callLLM(answers) {
  */
 export async function extractSkills(answers) {
   if (!process.env.OPENROUTER_API_KEY) {
+    console.info("[llm-extractor] No OPENROUTER_API_KEY — running heuristic extraction.");
     return heuristicExtract(answers);
   }
 
+  console.info(`[llm-extractor] LLM extraction starting (model=${OPENROUTER_MODEL}, timeout=${LLM_TIMEOUT_MS}ms)`);
   try {
-    return await withTimeout(callLLM(answers), LLM_TIMEOUT_MS);
+    const result = await withTimeout(callLLM(answers), LLM_TIMEOUT_MS);
+    console.info(`[llm-extractor] LLM extraction succeeded — provider=${result.provider}`);
+    return result;
   } catch (err) {
     console.warn(
-      `[llm-extractor] OpenRouter call failed — using heuristic fallback. Reason: ${err.message}`
+      `[llm-extractor] LLM call failed after ${LLM_TIMEOUT_MS}ms — falling back to heuristic. Reason: ${err.message}`
     );
     const fallback = heuristicExtract(answers);
     return {

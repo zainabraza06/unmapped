@@ -58,32 +58,96 @@ type Phase = "idle" | "m1_loading" | "m1_done" | "m2_loading" | "m2_done" | "m3_
 
 // ─── i18n helper ─────────────────────────────────────────────────────────────
 
+// Complete English fallback — matches config/i18n/en.json exactly.
+// Used when the API i18n endpoint is unreachable (server not yet started, slow network).
 const EN_FALLBACK: Record<string, string> = {
-  "intake.welcome": "Build your skills profile",
-  "intake.subtitle": "Tell us about the work you already do. We will translate it into a portable, internationally recognised skills profile.",
-  "intake.work_label": "Describe your work in your own words",
-  "intake.work_placeholder": "Example: I repair phones, replace screens, buy parts, and explain problems to customers.",
-  "intake.submit": "Generate portable skills profile",
-  "intake.submitting": "Generating profile...",
-  "profile.subtitle": "Portable profile",
-  "profile.occupation_unknown": "Uncertain occupation",
-  "profile.mapped_skills": "Mapped skills",
-  "profile.local_skills": "Local skills not fully captured by ESCO",
-  "profile.honest_caveat": "Honest caveat",
-  "profile.data_sources": "Data sources",
-  "profile.download_json": "Download profile JSON",
-  "profile.print_pdf": "Print / save as PDF",
-  "risk.title": "Automation Risk",
-  "risk.subtitle": "AI Readiness & Displacement Risk Lens",
-  "risk.durable_skills": "Durable skills",
-  "risk.adjacent_skills": "Adjacent skills to build",
-  "opp.title": "Opportunities",
-  "opp.subtitle": "Matched opportunities for your skills profile",
-  "opp.wage_signal": "Wage floor",
-  "country.switch_label": "Viewing context",
-  "nav.module1": "Skills Profile",
-  "nav.module2": "Risk Lens",
-  "nav.module3": "Opportunities",
+  // Intake form
+  "intake.welcome":                "Build your skills profile",
+  "intake.subtitle":               "Tell us about the work you already do. We will translate it into a portable, internationally recognised skills profile.",
+  "intake.progress":               "% ready",
+  "intake.city_label":             "City or region",
+  "intake.education_label":        "Highest education level",
+  "intake.work_label":             "Describe your work in your own words",
+  "intake.work_placeholder":       "Example: I repair phones, replace screens, buy parts, and explain problems to customers.",
+  "intake.sector_label":           "Closest sector",
+  "intake.experience_label":       "Years of experience",
+  "intake.work_type_label":        "Work type",
+  "intake.tools_label":            "Tools and technologies",
+  "intake.skills_label":           "Skills you use",
+  "intake.languages_label":        "Languages you speak",
+  "intake.extra_skills_label":     "Extra local skills the formal system may miss",
+  "intake.extra_skills_placeholder": "Example: I use mobile money, negotiate with suppliers, and train apprentices.",
+  "intake.submit":                 "Generate portable skills profile",
+  "intake.submitting":             "Generating profile...",
+  "intake.session_note":           "Session-only by default. Progress is saved in this tab.",
+  "intake.options_showing":        "Showing",
+  "intake.options_of":             "of",
+  "intake.options_generated":      "generated options",
+  // Work types
+  "work_type.self_employed":       "Self-employed",
+  "work_type.employed":            "Employed by someone else",
+  "work_type.both":                "Both employed and self-employed",
+  "work_type.family":              "Family or informal helper",
+  // Profile
+  "profile.title":                 "Your Skills Profile",
+  "profile.subtitle":              "Portable profile",
+  "profile.occupation_unknown":    "Uncertain occupation",
+  "profile.confidence.high":       "Strong match",
+  "profile.confidence.medium":     "Possible match — review details",
+  "profile.confidence.low":        "Uncertain match — add more detail",
+  "profile.mapped_skills":         "Mapped skills",
+  "profile.local_skills":          "Local skills not fully captured by ESCO",
+  "profile.onet_evidence":         "O*NET task evidence",
+  "profile.honest_caveat":         "Honest caveat",
+  "profile.data_sources":          "Data sources",
+  "profile.download_json":         "Download profile JSON",
+  "profile.print_pdf":             "Print / save as PDF",
+  "profile.machine_readable":      "Machine-readable profile",
+  "profile.isco_label":            "ISCO-08",
+  "profile.esco_label":            "ESCO code",
+  "profile.education_label":       "Education mapping",
+  "profile.empty_title":           "Profile output",
+  "profile.empty_body":            "Generated profiles will appear here.",
+  "profile.empty_note":            "AI helps interpret language, but ESCO/ISCO scoring decides the profile.",
+  // Confidence caveats
+  "confidence.caveat.high":        "Strong match based on your answers, but still self-reported.",
+  "confidence.caveat.medium":      "Useful starting point. Some parts should be reviewed before use as a credential.",
+  "confidence.caveat.low":         "Incomplete or uncertain. Review with a navigator before treating as a credential.",
+  // Risk
+  "risk.title":                    "Automation Risk",
+  "risk.subtitle":                 "AI Readiness & Displacement Risk Lens",
+  "risk.high":                     "High automation risk",
+  "risk.medium":                   "Medium automation risk",
+  "risk.low":                      "Low automation risk",
+  "risk.durable_skills":           "Durable skills (lower risk)",
+  "risk.adjacent_skills":          "Adjacent skills to build resilience",
+  "risk.scenario_label":           "Scenario",
+  "risk.source_note":              "Risk scores use Frey and Osborne (2013), calibrated for local infrastructure context.",
+  "risk.uncertainty_note":         "Displayed range accounts for ± uncertainty in LMIC context calibration.",
+  // Opportunities
+  "opp.title":                     "Opportunities",
+  "opp.subtitle":                  "Matched opportunities for your skills profile",
+  "opp.wage_signal":               "Typical monthly earnings in this sector",
+  "opp.unemployment_signal":       "Youth unemployment rate",
+  "opp.affordability_warning":     "Note: this training program may cost more than one month's typical income.",
+  "opp.data_note":                 "Based on ILO ILOSTAT and World Bank WDI data. These are estimates.",
+  // Data transparency
+  "data.source":                   "Source",
+  "data.uncertainty":              "This is an estimate. Real values may vary.",
+  "data.generated_at":             "Generated",
+  "data.transparency_title":       "Data transparency",
+  "data.transparency_note":        "All data from published, verifiable sources.",
+  // Errors
+  "error.no_connection":           "Could not connect to the profile service.",
+  "error.missing_fields":          "Please fill in all required fields before continuing.",
+  "error.try_again":               "Please try again.",
+  // Nav
+  "nav.module1":                   "Skills Profile",
+  "nav.module2":                   "Risk Lens",
+  "nav.module3":                   "Opportunities",
+  "nav.dashboard":                 "Policymaker View",
+  // Country
+  "country.switch_label":          "Viewing context",
 };
 
 // ─── Utility helpers ─────────────────────────────────────────────────────────
@@ -706,7 +770,7 @@ const initialAnswers: Module1Answers = {
   work_description: "",
   sector: "technical_services",
   experience_years: 3,
-  employment_type: "self-employed",
+  employment_type: "self_employed",
   tools: [],
   selected_skills: [],
   languages: ["English"],
@@ -808,15 +872,31 @@ export default function Home() {
     }
   }
 
+  // Static fallback shown while intakeOptions loads from the API
+  const FALLBACK_SKILLS = [
+    "Mobile phone repair", "Electronics repair", "Soldering", "Screen replacement",
+    "Fault diagnosis", "Customer service", "Cash handling", "Stock management",
+    "Food preparation", "Cooking", "Tailoring / sewing", "Carpentry",
+    "Masonry / construction", "Electrical wiring", "Plumbing", "Welding",
+    "Driving", "Farming", "Teaching / tutoring", "Hair and beauty",
+    "Data entry", "Basic computing", "Accounting / bookkeeping", "Sales",
+  ].map((label) => ({ label, id: label }));
+
+  const FALLBACK_TOOLS = [
+    "Smartphone", "Multimeter", "Soldering iron", "Screwdrivers",
+    "Sewing machine", "Hand tools", "Calculator", "Cash register",
+    "Motorbike", "Mobile money app", "WhatsApp Business", "Excel / spreadsheet",
+  ].map((label) => ({ label, id: label }));
+
   const skillOptions = useMemo(() => {
     const q = skillSearch.trim().toLowerCase();
-    const opts = intakeOptions?.skills ?? [];
+    const opts = intakeOptions?.skills?.length ? intakeOptions.skills : FALLBACK_SKILLS;
     return (q ? opts.filter((o) => o.label.toLowerCase().includes(q)) : opts).slice(0, 120);
   }, [intakeOptions, skillSearch]);
 
   const toolOptions = useMemo(() => {
     const q = toolSearch.trim().toLowerCase();
-    const opts = intakeOptions?.tools ?? [];
+    const opts = intakeOptions?.tools?.length ? intakeOptions.tools : FALLBACK_TOOLS;
     return (q ? opts.filter((o) => o.label.toLowerCase().includes(q)) : opts).slice(0, 80);
   }, [intakeOptions, toolSearch]);
 
@@ -971,10 +1051,10 @@ export default function Home() {
                       value={answers.employment_type}
                       onChange={(e) => update("employment_type", e.target.value)}
                     >
-                      <option>{t("work_type.self_employed")}</option>
-                      <option>{t("work_type.employed")}</option>
-                      <option>{t("work_type.both")}</option>
-                      <option>{t("work_type.family")}</option>
+                      <option value="self_employed">{t("work_type.self_employed")}</option>
+                      <option value="employed">{t("work_type.employed")}</option>
+                      <option value="both">{t("work_type.both")}</option>
+                      <option value="family">{t("work_type.family")}</option>
                     </select>
                   </label>
                 </div>
