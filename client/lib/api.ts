@@ -158,6 +158,64 @@ export type Module1IntakeOptions = {
   total_tools_for_sector: number;
 };
 
+// ---------------------------------------------------------------------------
+// Module 3 — Labor Market Opportunity Matching types
+// ---------------------------------------------------------------------------
+
+export type Module3OpportunityItem = {
+  title: string;
+  isco_code?: string;
+  income_range: string;
+  demand_strength?: "low" | "medium" | "high";
+  entry_barrier: "low" | "medium" | "high";
+  stability: "volatile" | "moderate" | "stable";
+  required_upskilling?: string[];
+  reason: string;
+};
+
+export type Module3Analysis = {
+  isco_code: string;
+  occupation_title: string;
+
+  labor_market_context: {
+    country: string;
+    informality_level: string;
+    key_economic_signals: {
+      wage_floor: string;
+      sector_employment_share: string;
+      youth_unemployment_rate: string;
+    };
+  };
+
+  opportunities: {
+    direct: Module3OpportunityItem[];
+    adjacent: Module3OpportunityItem[];
+    micro_enterprise: Module3OpportunityItem[];
+  };
+
+  ranking: Array<{
+    opportunity: string;
+    score: number;
+    reason: string;
+  }>;
+
+  policy_view: {
+    labor_gap_identified: string;
+    sector_shortage_signal: string;
+    recommendation_for_government_or_ngos: string;
+  };
+
+  explainability: {
+    key_drivers: string[];
+  };
+
+  _meta?: {
+    analysis_provider: string;
+    profile_id: string;
+    generated_at: string;
+  };
+};
+
 const NODE_API = process.env.NEXT_PUBLIC_NODE_API ?? "http://localhost:4000";
 
 export async function createModule1Profile(answers: Module1Answers): Promise<Module1Profile> {
@@ -195,4 +253,24 @@ export async function getModule1IntakeOptions(sector: string): Promise<Module1In
   }
 
   return response.json();
+}
+
+export async function matchOpportunities(
+  profile: Module1Profile,
+  module2: object | null,
+  countryCode: string
+): Promise<Module3Analysis> {
+  const response = await fetch(`${NODE_API}/api/module3/opportunities`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ profile, module2, country_code: countryCode }),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? "Could not generate opportunity map");
+  }
+
+  const body = await response.json();
+  return body.opportunities;
 }

@@ -11,6 +11,7 @@ import { summarizeProfile } from "./lib/nlp.js";
 import { buildProfile } from "./lib/profile.js";
 import { scoreProfile } from "./lib/scorer.js";
 import { analyseRisk } from "./lib/risk-engine.js";
+import { matchOpportunities } from "./lib/opportunity-engine.js";
 
 const PORT = Number(process.env.PORT || 4000);
 const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "http://localhost:3000";
@@ -150,6 +151,37 @@ async function createModule2RiskAnalysis(request, response) {
   sendJson(response, 200, { analysis });
 }
 
+/**
+ * Module 3 — Labor Market Opportunity Matching
+ *
+ * Input:  { profile: <Module1Profile>, module2: <Module2Analysis>, country_code: "GH" | "BD" }
+ *   or:   { profile, module2 }  — country_code falls back to profile.country_context.country_code
+ *
+ * Output: opportunity map per the Module 3 schema
+ */
+async function createModule3Opportunities(request, response) {
+  const body = await readBody(request);
+  const profile = body.profile;
+  const module2 = body.module2 ?? null;
+  const countryCode = body.country_code ?? profile?.country_context?.country_code;
+
+  if (!profile || !profile.primary_occupation) {
+    sendJson(response, 400, {
+      error: "Missing or invalid profile. Provide a Module 1 profile with primary_occupation.",
+    });
+    return;
+  }
+  if (!countryCode) {
+    sendJson(response, 400, { error: "Missing country_code" });
+    return;
+  }
+
+  const country = getCountry(countryCode);
+  const opportunities = await matchOpportunities({ profile, module2, country });
+
+  sendJson(response, 200, { opportunities });
+}
+
 const server = http.createServer(async (request, response) => {  try {
     const url = new URL(request.url, `http://${request.headers.host}`);
 
@@ -205,6 +237,14 @@ const server = http.createServer(async (request, response) => {  try {
       url.pathname === "/api/module2/risk-analysis"
     ) {
       await createModule2RiskAnalysis(request, response);
+      return;
+    }
+
+    if (
+      request.method === "POST" &&
+      url.pathname === "/api/module3/opportunities"
+    ) {
+      await createModule3Opportunities(request, response);
       return;
     }
 
