@@ -27,6 +27,7 @@
 
 import { OpenRouter } from "@openrouter/sdk";
 import { getCountryLaborStats } from "./lmic-calibrator.js";
+import { getOpportunitiesConfig, getGeneratedCountryConfig } from "./dataStore.js";
 
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? "openai/gpt-oss-120b:free";
 const LLM_TIMEOUT_MS   = Number(process.env.LLM_TIMEOUT_MS ?? 20000);
@@ -120,12 +121,24 @@ function anchorLaborMarket(profile, country, laborStats) {
 
 /**
  * Build the visible economic signals block from deterministic sources only.
- * At least two indicators are always populated.
+ * Priority order: handcrafted opportunities config > country_labor_stats.json > generated config.
+ * All values are cited with their source.
  */
-function buildEconomicSignals(country, laborStats) {
-  const wf = laborStats?.wage_floor;
+function buildEconomicSignals(country, laborStats, oppConfig, generatedConfig) {
+  // Wage floor — handcrafted config is authoritative (correct local currency)
+  const wf = oppConfig?.min_wage_monthly
+    ? { currency: oppConfig.currency ?? country.currency, monthly_amount: oppConfig.min_wage_monthly, source: oppConfig.min_wage_source ?? "country config" }
+    : laborStats?.wage_floor;
+
   const yu = laborStats?.youth_unemployment_rate;
   const se = laborStats?.employment_by_sector;
+  const nr = laborStats?.neet_rate;
+  const gp = laborStats?.gdp_per_capita;
+  const selfEmp = laborStats?.self_employed_pct
+    ?? (generatedConfig?.labor_market?.self_employed_pct_wdi
+      ? { rate: generatedConfig.labor_market.self_employed_pct_wdi / 100, note: oppConfig?.ilostat_self_employed_note, source: "World Bank WDI SL.EMP.SELF.ZS" }
+      : null);
+  const digital = generatedConfig?.digital_infrastructure;
 
   const wageFloor = wf
     ? `${wf.currency} ${wf.monthly_amount.toLocaleString()}/month (${wf.source})`
@@ -139,7 +152,31 @@ function buildEconomicSignals(country, laborStats) {
     ? `${(yu.rate * 100).toFixed(1)}% (age ${yu.age_group}, ${yu.source})`
     : "Not available";
 
-  return { wage_floor: wageFloor, sector_employment_share: sectorShare, youth_unemployment_rate: youthUnemployment };
+  const neetRate = nr
+    ? `${(nr.rate * 100).toFixed(1)}% of youth aged ${nr.age_group} — not in education, employment or training (${nr.source})`
+    : "Not available";
+
+  const gdpPerCapita = gp
+    ? `USD ${gp.value_usd.toLocaleString()} (${gp.source})`
+    : "Not available";
+
+  const selfEmployedShare = selfEmp
+    ? `${(selfEmp.rate * 100).toFixed(1)}% of workers are self-employed (${selfEmp.source ?? "WDI"})`
+    : "Not available";
+
+  const digitalInfra = digital
+    ? `${digital.infrastructure_level} — mobile broadband ${digital.mobile_broadband_per_100?.toFixed(1) ?? "?"} per 100 (${digital.source ?? "ITU 2024"})`
+    : "Not available";
+
+  return {
+    wage_floor: wageFloor,
+    sector_employment_share: sectorShare,
+    youth_unemployment_rate: youthUnemployment,
+    neet_rate: neetRate,
+    gdp_per_capita: gdpPerCapita,
+    self_employed_share: selfEmployedShare,
+    digital_infrastructure: digitalInfra,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -158,7 +195,7 @@ Rules you MUST follow:
 - Durable and adjacent skills from Module 2 MUST drive the adjacent opportunity choices.
 - Return valid JSON only. No markdown. No prose outside the JSON object.`;
 
-function buildOpportunityPrompt(profile, module2, country, laborStats, anchor, signals) {
+function buildOpportunityPrompt(profile, module2, country, laborStats, anchor, signals, oppConfig) {
   const skillLabels     = (profile.skills?.mapped ?? []).map((s) => s.plain_label || s.label);
   const durableSkills   = module2?.skill_resilience_analysis?.durable_skills  ?? [];
   const adjacentSkills  = module2?.skill_resilience_analysis?.adjacent_skills ?? [];
@@ -195,6 +232,15 @@ function buildOpportunityPrompt(profile, module2, country, laborStats, anchor, s
       "Always include informal hiring channels in direct opportunities.",
       "Micro-enterprise paths must be grounded in the local informal economy.",
     ],
+    // Real opportunity types and training providers for this country
+    local_opportunity_types: (oppConfig?.types ?? []).filter(t => t.enabled !== false).map(t => ({
+      id: t.id,
+      label: t.label,
+      weight: t.weight,
+      notes: t.notes,
+      providers: t.providers?.slice(0, 3),
+      platforms: t.platforms,
+    })),
   };
 
   return `${JSON.stringify(context, null, 2)}
@@ -263,9 +309,9 @@ Constraints:
 // LLM call with template fallback — Steps 2–5
 // ---------------------------------------------------------------------------
 
-async function runLLMOpportunityAnalysis(profile, module2, country, laborStats, anchor, signals) {
+async function runLLMOpportunityAnalysis(profile, module2, country, laborStats, anchor, signals, oppConfig) {
   if (!process.env.OPENROUTER_API_KEY) {
-    return buildOpportunityFallback(profile, module2, country, anchor, signals);
+    return buildOpportunityFallback(profile, module2, country, anchor, signals, oppConfig);
   }
 
   try {
@@ -279,7 +325,7 @@ async function runLLMOpportunityAnalysis(profile, module2, country, laborStats, 
           stream: false,
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: buildOpportunityPrompt(profile, module2, country, laborStats, anchor, signals) },
+            { role: "user", content: buildOpportunityPrompt(profile, module2, country, laborStats, anchor, signals, oppConfig) },
           ],
         },
       }),
@@ -300,7 +346,7 @@ async function runLLMOpportunityAnalysis(profile, module2, country, laborStats, 
     return { ...parsed, _provider: `openrouter/${OPENROUTER_MODEL}` };
   } catch (err) {
     console.warn(`[opportunity-engine] LLM failed (${err.message}) — using template fallback`);
-    return buildOpportunityFallback(profile, module2, country, anchor, signals);
+    return buildOpportunityFallback(profile, module2, country, anchor, signals, oppConfig);
   }
 }
 
@@ -417,7 +463,7 @@ const ISCO_OPPORTUNITY_TEMPLATES = {
   },
 };
 
-function buildOpportunityFallback(profile, module2, country, anchor, signals) {
+function buildOpportunityFallback(profile, module2, country, anchor, signals, oppConfig) {
   const iscoMajor  = anchor.isco_major;
   const templates  = ISCO_OPPORTUNITY_TEMPLATES[iscoMajor] ?? ISCO_OPPORTUNITY_TEMPLATES["7"];
   const adjustedP  = module2?.automation_analysis?.adjusted_automation_probability ?? 0.5;
@@ -498,15 +544,17 @@ function buildOpportunityFallback(profile, module2, country, anchor, signals) {
  * @returns {Promise<object>}       - Opportunity map in the Module 3 JSON schema
  */
 export async function matchOpportunities({ profile, module2, country }) {
-  const laborStats = getCountryLaborStats(country.country_code);
+  const laborStats      = getCountryLaborStats(country.country_code);
+  const oppConfig       = getOpportunitiesConfig(country.country_code);
+  const generatedConfig = getGeneratedCountryConfig(country.country_code);
 
   // Step 1 — Labor market anchoring (deterministic)
   const anchor  = anchorLaborMarket(profile, country, laborStats);
-  const signals = buildEconomicSignals(country, laborStats);
+  const signals = buildEconomicSignals(country, laborStats, oppConfig, generatedConfig);
 
   // Steps 2–5 — LLM-assisted opportunity mapping and ranking
   const llmResult = await runLLMOpportunityAnalysis(
-    profile, module2, country, laborStats, anchor, signals
+    profile, module2, country, laborStats, anchor, signals, oppConfig
   );
 
   // Assemble final output per the strict Module 3 JSON schema
@@ -529,6 +577,10 @@ export async function matchOpportunities({ profile, module2, country }) {
       analysis_provider: llmResult._provider ?? "unknown",
       profile_id:        profile.id,
       generated_at:      new Date().toISOString(),
+      data_sources: {
+        wage_floor: oppConfig?.min_wage_source ?? laborStats?.wage_floor?.source ?? "country config",
+        economic_signals: "World Bank WDI 2024 + ILOSTAT 2024 + ITU 2024",
+      },
     },
   };
 }

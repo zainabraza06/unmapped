@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -9,10 +9,26 @@ function readJson(relativePath) {
   return JSON.parse(readFileSync(join(root, relativePath), "utf-8"));
 }
 
+function readJsonIfExists(relativePath) {
+  const full = join(root, relativePath);
+  return existsSync(full) ? JSON.parse(readFileSync(full, "utf-8")) : null;
+}
+
 const taxonomyIndex = readJson("data/processed/module1_taxonomy_index.json");
 const localInformalSkills = readJson("config/local_informal_skills.json");
 const sourceRegistry = readJson("data/processed/source_registry.generated.json");
 const countryRegistry = readJson("data/processed/country_registry.generated.json");
+
+// Lazy-loaded rich generated configs (loaded on first access, not at startup)
+let _allCountryConfigs = null;
+function getAllCountryConfigs() {
+  _allCountryConfigs ??= readJson("data/processed/all_country_configs.generated.json");
+  return _allCountryConfigs;
+}
+
+// Per-country caches for configs loaded from disk at request time
+const _opportunitiesCache = new Map();
+const _i18nCache = new Map();
 
 const sectorLabels = {
   technical_services: "Technical services",
@@ -163,4 +179,59 @@ export function getIntakeOptions({ sector, limit = "all" } = {}) {
     total_skills_for_sector: cachedIntakeOptions.skills_by_sector[selectedSector]?.length ?? 0,
     total_tools_for_sector: cachedIntakeOptions.tools_by_sector[selectedSector]?.length ?? 0,
   };
+}
+
+/**
+ * Return the rich generated country config from all_country_configs.generated.json.
+ * Contains ITU digital infrastructure, WDI labor market, automation calibration,
+ * and opportunity types for 250 countries.
+ *
+ * @param {string} countryCode - ISO2 code (e.g. "GH", "BD")
+ * @returns {object|null}
+ */
+export function getGeneratedCountryConfig(countryCode) {
+  return getAllCountryConfigs().countries[countryCode] ?? null;
+}
+
+/**
+ * Return the handcrafted opportunities config for a country.
+ * Loads config/opportunities/{CC}.json if it exists (authoritative local data
+ * with real providers, platforms, correct local-currency wage floor).
+ * Falls back to the generated config embedded in all_country_configs.
+ *
+ * @param {string} countryCode - ISO2 code (e.g. "GH", "BD")
+ * @returns {object|null}
+ */
+export function getOpportunitiesConfig(countryCode) {
+  if (!_opportunitiesCache.has(countryCode)) {
+    const handcrafted = readJsonIfExists(`config/opportunities/${countryCode}.json`);
+    if (handcrafted) {
+      _opportunitiesCache.set(countryCode, handcrafted);
+    } else {
+      const generated = getGeneratedCountryConfig(countryCode);
+      _opportunitiesCache.set(countryCode, generated?.opportunities ?? null);
+    }
+  }
+  return _opportunitiesCache.get(countryCode);
+}
+
+/**
+ * Return i18n strings for a locale.
+ * Loads config/i18n/{locale}.json, falls back to en.json.
+ *
+ * @param {string} locale - locale string, e.g. "en-GH", "bn", "en"
+ * @returns {object}
+ */
+export function getI18nStrings(locale) {
+  // Normalise: "en-GH" → try "en-GH" then "en"
+  const candidates = [locale, locale?.split("-")[0], "en"].filter(Boolean);
+  for (const candidate of candidates) {
+    if (_i18nCache.has(candidate)) return _i18nCache.get(candidate);
+    const strings = readJsonIfExists(`config/i18n/${candidate}.json`);
+    if (strings) {
+      _i18nCache.set(candidate, strings);
+      return strings;
+    }
+  }
+  return {};
 }

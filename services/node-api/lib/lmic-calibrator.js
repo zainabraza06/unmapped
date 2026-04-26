@@ -45,6 +45,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { getGeneratedCountryConfig } from "./dataStore.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, "..", "..", "..");
@@ -85,17 +86,29 @@ function getInformalityFactor(country, countryStats) {
 }
 
 function getInfrastructureFactor(country) {
-  // Proxy by region from country registry geography
+  // Prefer the real ITU infrastructure_level from the generated country config
+  // (low / medium / high), compiled from ITU 2024 mobile broadband data.
+  const generated = getGeneratedCountryConfig(country.country_code);
+  const level = generated?.digital_infrastructure?.infrastructure_level
+    ?? generated?.automation?.infrastructure_level
+    ?? null;
+
+  if (level === "high")   return { factor: 1.00, label: `High digital infrastructure (ITU 2024 — ${generated?.digital_infrastructure?.source ?? "ITU"})` };
+  if (level === "medium") return { factor: 0.90, label: `Medium digital infrastructure (ITU 2024 — mobile broadband ${generated?.digital_infrastructure?.mobile_broadband_per_100?.toFixed(1) ?? "?"} per 100)` };
+  if (level === "low")    return { factor: 0.80, label: `Low digital infrastructure (ITU 2024 — ${generated?.digital_infrastructure?.source ?? "ITU"})` };
+
+  // Fallback: derive from region when no ITU data is available
   const region = country.geography?.region ?? country.geography?.subregion ?? "";
   const isSSA = region.toLowerCase().includes("africa");
-  const isSA = region.toLowerCase().includes("south asia") || region.toLowerCase().includes("southern asia");
+  const isSA  = region.toLowerCase().includes("south asia") || region.toLowerCase().includes("southern asia");
   const incomeGroup = country.world_bank?.income_level_iso3v3?.toLowerCase() ?? "";
-  if (incomeGroup.includes("high")) return { factor: 1.00, label: "High-income digital infrastructure" };
+
+  if (incomeGroup.includes("high")) return { factor: 1.00, label: "High-income digital infrastructure (geographic proxy)" };
   if ((isSSA || isSA) && (incomeGroup.includes("low") || incomeGroup.includes("lower"))) {
-    return { factor: 0.85, label: `Sub-Saharan Africa / South Asia low-income digital infrastructure (ITU 2022)` };
+    return { factor: 0.85, label: "Sub-Saharan Africa / South Asia low-income digital infrastructure (geographic proxy — no ITU data)" };
   }
-  if (incomeGroup.includes("upper")) return { factor: 0.95, label: "Upper-middle-income digital infrastructure" };
-  return { factor: 0.90, label: "Lower-middle-income digital infrastructure (ITU 2022)" };
+  if (incomeGroup.includes("upper")) return { factor: 0.95, label: "Upper-middle-income digital infrastructure (geographic proxy)" };
+  return { factor: 0.90, label: "Lower-middle-income digital infrastructure (geographic proxy — no ITU data)" };
 }
 
 // ---------------------------------------------------------------------------
@@ -158,6 +171,9 @@ export function calibrateForLMIC(baseProbability, country) {
     infrastructure_factor: infraFactor.factor,
     explanation,
     sources,
+    // Automation scenario context from generated country config (if available)
+    uncertainty_band: getGeneratedCountryConfig(countryCode)?.automation?.uncertainty_band ?? 0.15,
+    scenario_toggles:  getGeneratedCountryConfig(countryCode)?.automation?.scenario_toggles ?? [],
   };
 }
 

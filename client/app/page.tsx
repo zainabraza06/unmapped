@@ -410,7 +410,14 @@ function ProfilePanel({ profile }: { profile: Module1Profile | null }) {
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-sm uppercase tracking-[0.2em] text-emerald-700">Portable profile</p>
-          <h2 className="mt-2 text-3xl font-semibold">{profile.primary_occupation?.title ?? "Uncertain occupation"}</h2>
+          <h2 className="mt-2 text-3xl font-semibold">
+            {profile.primary_occupation?.isco_title ?? profile.primary_occupation?.title ?? "Uncertain occupation"}
+          </h2>
+          {profile.primary_occupation?.isco_title && profile.primary_occupation?.title !== profile.primary_occupation?.isco_title ? (
+            <p className="mt-1 text-sm text-stone-500">
+              ESCO match: {profile.primary_occupation.title}
+            </p>
+          ) : null}
         </div>
         <span className="rounded-full bg-stone-950 px-3 py-1 text-sm font-medium text-white">
           {profile.confidence.level} confidence

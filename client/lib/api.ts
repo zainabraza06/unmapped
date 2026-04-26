@@ -184,6 +184,14 @@ export type Module3Analysis = {
       wage_floor: string;
       sector_employment_share: string;
       youth_unemployment_rate: string;
+      /** Share of youth not in education, employment or training (WDI) */
+      neet_rate?: string;
+      /** GDP per capita in USD (World Bank WDI) */
+      gdp_per_capita?: string;
+      /** Share of workers who are self-employed (WDI) */
+      self_employed_share?: string;
+      /** ITU digital infrastructure level */
+      digital_infrastructure?: string;
     };
   };
 
