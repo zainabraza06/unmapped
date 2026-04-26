@@ -159,6 +159,45 @@ export type Module1IntakeOptions = {
 };
 
 // ---------------------------------------------------------------------------
+// Module 2 — Automation Risk Analysis types
+// ---------------------------------------------------------------------------
+
+export type Module2Analysis = {
+  isco_code: string;
+  occupation_title: string;
+  automation_analysis: {
+    source_model: string;
+    base_automation_probability: number | null;
+    base_source: string;
+    lmic_adjustment_explanation: string[];
+    adjustment_factor: number;
+    adjusted_automation_probability: number | null;
+    sources: string[];
+    uncertainty_band?: number;
+    scenario_toggles?: Array<{ id: string; label: string; multiplier_adjustment: number }>;
+  };
+  task_breakdown: {
+    high_risk_tasks: Array<{ task: string; risk_score: number }>;
+    low_risk_tasks: Array<{ task: string; risk_score: number }>;
+  };
+  skill_resilience_analysis: {
+    at_risk_skills: string[];
+    durable_skills: string[];
+    adjacent_skills: string[];
+  };
+  economic_context: { country: string; informality_level: string; interpretation: string };
+  macro_signals: { education_projection: string; labor_shift_trend: string };
+  final_readiness_profile: {
+    risk_level: "low" | "medium" | "high" | "very high";
+    resilience_level: "low" | "medium" | "high";
+    opportunity_type: "displacement" | "stable" | "upskilling_required" | "growth_area";
+    summary: string;
+  };
+  explainability: { key_drivers: string[] };
+  _meta?: { analysis_provider: string; profile_id: string; generated_at: string };
+};
+
+// ---------------------------------------------------------------------------
 // Module 3 — Labor Market Opportunity Matching types
 // ---------------------------------------------------------------------------
 
@@ -281,4 +320,29 @@ export async function matchOpportunities(
 
   const body = await response.json();
   return body.opportunities;
+}
+
+export async function createModule2RiskAnalysis(
+  profile: Module1Profile,
+  countryCode: string
+): Promise<Module2Analysis> {
+  const response = await fetch(`${NODE_API}/api/module2/risk-analysis`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ profile, country_code: countryCode }),
+  });
+
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error((body as { error?: string }).error ?? "Could not generate risk analysis");
+  }
+
+  const body = await response.json();
+  return body.analysis;
+}
+
+export async function getI18nStrings(locale: string): Promise<Record<string, string>> {
+  const response = await fetch(`${NODE_API}/api/i18n?locale=${encodeURIComponent(locale)}`);
+  if (!response.ok) return {};
+  return response.json();
 }

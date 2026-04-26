@@ -4,6 +4,7 @@ import {
   getIntakeOptions,
   getModule1Metadata,
   getSupportedCountries,
+  getI18nStrings,
 } from "./lib/dataStore.js";
 import { applyCountryAdjustments } from "./lib/country-adjuster.js";
 import { extractSkills } from "./lib/llm-extractor.js";
@@ -196,6 +197,12 @@ const server = http.createServer(async (request, response) => {  try {
         service: "unmapped-node-api",
         extraction_mode: process.env.OPENROUTER_API_KEY ? "llm" : "heuristic",
       });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/api/i18n") {
+      const locale = url.searchParams.get("locale") ?? "en";
+      sendJson(response, 200, getI18nStrings(locale));
       return;
     }
 
