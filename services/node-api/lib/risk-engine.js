@@ -18,19 +18,14 @@
  * Module 1 profile — the LLM provides narrative and classification only.
  */
 
-import { OpenRouter } from "@openrouter/sdk";
 import { getByONetLinks, getByISCOGroup } from "./automation-lookup.js";
 import { calibrateForLMIC, getCountryLaborStats } from "./lmic-calibrator.js";
 import { getTaxonomyIndex } from "./dataStore.js";
 
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? "openai/gpt-oss-120b:free";
-const LLM_TIMEOUT_MS   = Number(process.env.LLM_TIMEOUT_MS ?? 20000);
-
-let _client = null;
-function getClient() {
-  _client ??= new OpenRouter({ apiKey: process.env.OPENROUTER_API_KEY });
-  return _client;
-}
+const OPENROUTER_MODEL   = process.env.OPENROUTER_MODEL ?? "openai/gpt-oss-120b:free";
+const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
+// Free-tier models on OpenRouter can take 30-60s — match llm-extractor headroom.
+const LLM_TIMEOUT_MS     = Number(process.env.LLM_TIMEOUT_MS ?? 60000);
 
 function withTimeout(promise, ms) {
   let timer;
@@ -111,88 +106,132 @@ function buildAnalysisPrompt(occupation, skills, country, automation, laborStats
 
   return `${JSON.stringify(context, null, 2)}
 
-Analyse this occupation profile and return ONLY the following JSON object:
+Analyse the occupation profile above and return ONLY valid JSON matching this structure exactly (no markdown fences, no extra keys, no angle-bracket placeholders):
 {
   "task_breakdown": {
     "high_risk_tasks": [
-      { "task": "<task description>", "risk_score": <0.0-1.0> }
+      { "task": "Process routine data into standard templates", "risk_score": 0.82 },
+      { "task": "Apply standardised testing protocols", "risk_score": 0.74 }
     ],
     "low_risk_tasks": [
-      { "task": "<task description>", "risk_score": <0.0-1.0> }
+      { "task": "Diagnose non-standard faults in complex systems", "risk_score": 0.21 },
+      { "task": "Negotiate with clients on technical requirements", "risk_score": 0.15 }
     ]
   },
   "skill_resilience_analysis": {
-    "at_risk_skills": ["<skill label>"],
-    "durable_skills": ["<skill label>"],
-    "adjacent_skills": ["<skill label — upskilling pathway>"]
+    "at_risk_skills": ["routine testing", "data entry"],
+    "durable_skills": ["fault diagnosis", "client communication"],
+    "adjacent_skills": ["IoT sensor configuration", "basic data analysis"]
   },
   "macro_signals": {
-    "education_projection": "<1-2 sentences on education trend in this country, citing Wittgenstein projections if available>",
-    "labor_shift_trend": "<1-2 sentences on informal→semi-formal transition trend>"
+    "education_projection": "Secondary completion is rising. By 2040 a larger workforce share will hold formal credentials, increasing competition for technical roles.",
+    "labor_shift_trend": "A high-informality market is gradually formalising through mobile finance and digital supply chains, expected to accelerate through 2035."
   },
   "final_readiness_profile": {
-    "risk_level": "<low|medium|high|very high>",
-    "resilience_level": "<low|medium|high>",
-    "opportunity_type": "<displacement|stable|upskilling_required|growth_area>",
-    "summary": "<2-3 sentence summary>"
+    "risk_level": "medium",
+    "resilience_level": "medium",
+    "opportunity_type": "upskilling_required",
+    "summary": "The occupation faces moderate risk. Durable skills buffer near-term displacement, but upskilling toward digital or supervisory roles is advisable within 5 years."
   },
   "explainability": {
-    "key_drivers": ["<driver 1>", "<driver 2>", "<driver 3>"]
+    "key_drivers": [
+      "Adjusted automation probability reflects LMIC infrastructure constraints.",
+      "High-risk tasks are routine and procedural; low-risk tasks require contextual judgment.",
+      "Informality and low wages delay automation adoption vs OECD baseline."
+    ]
   }
 }
 
-Constraints:
-- high_risk_tasks: 2–4 tasks. low_risk_tasks: 2–4 tasks.
-- at_risk_skills and durable_skills must come ONLY from skills_from_profile.
-- adjacent_skills may suggest 1-3 closely related upskilling areas not in the profile.
-- risk_level and resilience_level must be consistent with adjusted_probability ${automation.adjusted}.
-- key_drivers: exactly 3 items.`;
+Replace all example values with real analysis of the profile above. Rules:
+- high_risk_tasks: 2 to 4 objects with numeric risk_score (0.0 to 1.0).
+- low_risk_tasks: 2 to 4 objects with numeric risk_score (0.0 to 1.0).
+- at_risk_skills and durable_skills: use ONLY skill names from skills_from_profile.
+- adjacent_skills: 1 to 3 upskilling areas not already in the profile.
+- risk_level and resilience_level must match adjusted_probability ${automation.adjusted}.
+- key_drivers: exactly 3 strings.
+- Return ONLY the JSON object. No prose. No markdown.`;
 }
 
 // ---------------------------------------------------------------------------
 // LLM call with template fallback
 // ---------------------------------------------------------------------------
 
+async function callLLMOnce(occupation, skills, country, automation, laborStats) {
+  const body = {
+    model: OPENROUTER_MODEL,
+    max_tokens: 2000,
+    response_format: { type: "json_object" },
+    stream: false,
+    messages: [
+      { role: "system", content: SYSTEM_PROMPT },
+      { role: "user", content: buildAnalysisPrompt(occupation, skills, country, automation, laborStats) },
+    ],
+  };
+
+  const res = await withTimeout(
+    fetch(OPENROUTER_API_URL, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://unmapped.app",
+        "X-Title": "UNMAPPED Risk Engine",
+      },
+      body: JSON.stringify(body),
+    }),
+    LLM_TIMEOUT_MS
+  );
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`OpenRouter HTTP ${res.status}: ${errText.slice(0, 200)}`);
+  }
+
+  const result = await res.json();
+  const raw = result.choices?.[0]?.message?.content ?? "";
+  if (!raw.trim()) throw new Error("Empty LLM response");
+
+  const parsed = JSON.parse(
+    raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim()
+  );
+
+  const required = ["task_breakdown", "skill_resilience_analysis", "macro_signals", "final_readiness_profile", "explainability"];
+  for (const key of required) {
+    if (!parsed[key]) throw new Error(`LLM response missing key: ${key}`);
+  }
+  return { ...parsed, _provider: `openrouter/${OPENROUTER_MODEL}` };
+}
+
 async function runLLMAnalysis(occupation, skills, country, automation, laborStats) {
   if (!process.env.OPENROUTER_API_KEY) {
+    console.info("[risk-engine] No OPENROUTER_API_KEY — using deterministic template.");
     return buildTemplateFallback(occupation, skills, automation, laborStats, country);
   }
 
-  try {
-    const client = getClient();
-    const result = await withTimeout(
-      client.chat.send({
-        chatRequest: {
-          model: OPENROUTER_MODEL,
-          maxTokens: 1200,
-          responseFormat: { type: "json_object" },
-          stream: false,
-          messages: [
-            { role: "system", content: SYSTEM_PROMPT },
-            { role: "user", content: buildAnalysisPrompt(occupation, skills, country, automation, laborStats) },
-          ],
-        },
-      }),
-      LLM_TIMEOUT_MS
-    );
-
-    const raw = result.choices?.[0]?.message?.content ?? "";
-    if (!raw.trim()) throw new Error("Empty LLM response");
-
-    const parsed = JSON.parse(
-      raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "").trim()
-    );
-
-    // Validate required keys — if anything is missing, fall back
-    const required = ["task_breakdown", "skill_resilience_analysis", "macro_signals", "final_readiness_profile", "explainability"];
-    for (const key of required) {
-      if (!parsed[key]) throw new Error(`LLM response missing key: ${key}`);
+  // Retry once with backoff — free-tier OpenRouter models rate-limit back-to-back
+  // requests (the prior Module 1 call may still be holding the queue).
+  const RETRY_DELAY_MS = 12000;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    console.info(`[risk-engine] LLM analysis attempt ${attempt}/2 (model=${OPENROUTER_MODEL}, timeout=${LLM_TIMEOUT_MS}ms)`);
+    try {
+      const parsed = await callLLMOnce(occupation, skills, country, automation, laborStats);
+      console.info(`[risk-engine] LLM analysis succeeded on attempt ${attempt}`);
+      return parsed;
+    } catch (err) {
+      const detail = err?.response?.status
+        ? `HTTP ${err.response.status} — ${err.message}`
+        : err.message;
+      console.warn(`[risk-engine] Attempt ${attempt} failed: ${detail}`);
+      if (attempt < 2) {
+        console.info(`[risk-engine] Waiting ${RETRY_DELAY_MS / 1000}s before retry…`);
+        await new Promise((r) => setTimeout(r, RETRY_DELAY_MS));
+      }
     }
-    return { ...parsed, _provider: `openrouter/${OPENROUTER_MODEL}` };
-  } catch (err) {
-    console.warn(`[risk-engine] LLM failed (${err.message}) — using template fallback with real Wittgenstein data`);
-    return buildTemplateFallback(occupation, skills, automation, laborStats, country);
   }
+
+  const lastErr = `Both LLM attempts failed — see server log for details`;
+  console.warn(`[risk-engine] ${lastErr}`);
+  return { ...buildTemplateFallback(occupation, skills, automation, laborStats, country), _llm_error: lastErr };
 }
 
 // Generic ISCO task templates used when O*NET data is not available in the
@@ -398,9 +437,9 @@ export async function analyseRisk({ profile, country }) {
 
     economic_context: {
       country: country.country_name,
-      informality_level: laborStats
-        ? `Agriculture share ${(laborStats.employment_by_sector.agriculture_share * 100).toFixed(1)}% (ILOSTAT ${laborStats.year})`
-        : "Data not available",
+      informality_level: laborStats?.employment_by_sector?.agriculture_share != null
+        ? `Agriculture share ${(laborStats.employment_by_sector.agriculture_share * 100).toFixed(1)}% (ILOSTAT ${laborStats.year ?? "recent"})`
+        : country.informality_level ?? "Data not available",
       interpretation: lmicResult?.explanation?.[0] ?? "LMIC calibration not available",
     },
 

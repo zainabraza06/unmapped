@@ -30,7 +30,7 @@ import { getCountryLaborStats } from "./lmic-calibrator.js";
 import { getOpportunitiesConfig, getGeneratedCountryConfig } from "./dataStore.js";
 
 const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL ?? "openai/gpt-oss-120b:free";
-const LLM_TIMEOUT_MS   = Number(process.env.LLM_TIMEOUT_MS ?? 20000);
+const LLM_TIMEOUT_MS   = Number(process.env.LLM_TIMEOUT_MS ?? 60000);
 
 let _client = null;
 function getClient() {
@@ -145,7 +145,7 @@ function buildEconomicSignals(country, laborStats, oppConfig, generatedConfig) {
     : `${country.currency} — national minimum wage (see wage authority)`;
 
   const sectorShare = se
-    ? `Services ${(se.services_share * 100).toFixed(1)}%, Industry ${(se.industry_share * 100).toFixed(1)}%, Agriculture ${(se.agriculture_share * 100).toFixed(1)}% (ILOSTAT ${laborStats.year})`
+    ? `Services ${(se.services_share * 100).toFixed(1)}%, Industry ${(se.industry_share * 100).toFixed(1)}%, Agriculture ${(se.agriculture_share * 100).toFixed(1)}% (ILOSTAT ${laborStats?.year ?? "recent"})`
     : "Sector distribution not available";
 
   const youthUnemployment = yu

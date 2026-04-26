@@ -120,6 +120,7 @@ async function testModule2(profile) {
 
   const provider = a._meta?.analysis_provider;
   pass(`Analysis provider: ${provider}`);
+  if (a._llm_error) console.log(`  ⚠ LLM error: ${a._llm_error}`);
 
   console.log(`\n  → Base probability:     ${base}`);
   console.log(`  → Adjusted probability: ${adj} (LMIC factor ${factor})`);

@@ -54,7 +54,7 @@ export function summarizeProfile({
   }
 
   const provider =
-    extractionMethod === "openai" || extractionMethod === "llm"
+    extractionMethod === "openrouter" || extractionMethod === "llm"
       ? "llm_assisted"
       : "node_deterministic_nlp";
 

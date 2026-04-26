@@ -176,10 +176,9 @@ export function buildProfile({ answers, country, scoring, signals = {}, aiSummar
       caveat: buildCaveat(scoring.confidence),
       // Surface which extraction path was used (LLM or heuristic).
       extraction_method: signals.provider ?? "heuristic",
-      extraction_provider:
-        signals.provider === "openai"
-          ? `openai/${signals.model ?? "unknown"}`
-          : signals.provider ?? "heuristic",
+      extraction_provider: signals.provider
+        ? `openrouter/${signals.model ?? "unknown"}`
+        : "heuristic",
       evidence: primary?.evidence,
       // Country adjustment reasons for full traceability.
       country_adjustments:
