@@ -13,7 +13,7 @@
 const BASE = "http://localhost:4000";
 
 const SAMPLE_ANSWERS = {
-  country_code: "GH",
+  country_code: "PK",
   city: "Accra",
   education: "tvet",
   work_description: "I repair mobile phones and electronics. I fix cracked screens, replace batteries, diagnose faults, and do soldering. I've been doing this for 5 years in my own small workshop.",
